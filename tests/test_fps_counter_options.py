@@ -37,12 +37,15 @@ int dm_overlay_custom(int l, int c, float *x, float *y, float *s) { (void)l; (vo
 static int parse(const char *line) { return fps_opt_parse(line); }
 int main(int argc, char **argv) {
     assert(argc == 2);   // a scratch file in the test's own folder (tmpfile() on MinGW with msvcrt makes it in the drive's root)
-    // four tabs, six rows each; the Counter tab: the five rows (FPS, SOC, BAT, driver, graph); the Style tab: the four choices then Export and Import save
-    assert(OVM_TABS == 4 && OVM_PER_TAB == 6 && OVM_ROWS == 8);   // (the sixth rows: Floating sticks in Gamepad; Game and Counter end in a blank)
+    // four tabs, six rows each (as many for every tab: the panel keeps its size); every slot is taken: the Gamepad tab ends in Floating sticks, the Game tab
+    // in Frame gen and Flow scale, the Counter tab's five rows (FPS, SOC, BAT, driver, graph) then Audio output, the Style tab's four choices then Export and Import save
+    assert(OVM_TABS == 4 && OVM_PER_TAB == 6 && OVM_ROWS == 8);
     assert(ov_menu_item(0, 0) == OVM_TAB && ov_menu_item(3, 7) == OVM_RESUME && ov_menu_item(0, 6) == OVM_FLOAT);
-    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(1, 3) == OVM_LSFG && ov_menu_item(1, 4) == OVM_FLOW && ov_menu_item(1, 5) == OVM_AUDIO && ov_menu_item(1, 6) == -1);
-    const int counter[6] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, -1}, style[6] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_EXPORT, OVM_IMPORT};
-    for (int r = 0; r < 6; r++) { assert(ov_menu_item(2, r + 1) == counter[r]); assert(ov_menu_item(3, r + 1) == style[r]); }
+    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(1, 2) == OVM_SR && ov_menu_item(1, 3) == OVM_SHARP && ov_menu_item(1, 5) == OVM_LSFG && ov_menu_item(1, 6) == OVM_FLOW);
+    const int counter[5] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH}, style[6] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_EXPORT, OVM_IMPORT};
+    for (int r = 0; r < 5; r++) assert(ov_menu_item(2, r + 1) == counter[r]);
+    for (int r = 0; r < 6; r++) assert(ov_menu_item(3, r + 1) == style[r]);
+    assert(ov_menu_item(2, 6) == (dm_menu_audio_available() ? OVM_AUDIO : -1));
     assert(!strcmp(OVM_TAB_NAMES[2], "Counter") && !strcmp(OVM_TAB_NAMES[3], "Style"));
     { const float p[4] = {0, 0, 1000, 1000};   // the Flow scale slider: 25 at its left end, 100 at its right, whole 5s between
       assert(ov_menu_track_value(-1e6f, p, 4, OV_FLOW_MIN, OV_FLOW_MAX) == 25 && ov_menu_track_value(1e6f, p, 4, OV_FLOW_MIN, OV_FLOW_MAX) == 100);

@@ -39,7 +39,7 @@ class OverlayVisibility(unittest.TestCase):
 #include "stick_axis.h"
 static _Atomic int g_set_overlay, g_overlay, g_pads, g_edit, g_menu_btn = 1;
 static _Atomic int g_cust[2][2][OV_N][4];
-static _Atomic int g_set_rumble, g_set_fps, g_set_labels, g_menu_tab, g_sv_st, g_set_float, g_cust_ver, g_set_lsfg, g_fps_ver, lsfg_applied;
+static _Atomic int g_set_rumble, g_set_fps, g_set_sr, g_set_labels, g_menu_tab, g_sv_st, g_set_float, g_cust_ver, g_set_lsfg, g_fps_ver, lsfg_applied;
 int dm_lsfg_mode(void) { return atomic_load(&g_set_lsfg); }
 static void lsfg_apply(void) { atomic_fetch_add(&lsfg_applied, 1); }
 static int layout, saves;
