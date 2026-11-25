@@ -619,11 +619,11 @@ static void ov_raster(uint8_t *px, uint32_t w, uint32_t h, uint32_t sh) {
         if (c->kind == OV_MENU || ov_off(c)) continue;   // a sprite only; hidden by the player (the editor's open and close rasterize again)
         { float fx, fy; if ((c->kind == OV_STICK_L || c->kind == OV_STICK_R) && dm_overlay_float(c->kind == OV_STICK_R, &fx, &fy)) continue; }   // floating: SP_RING, where the finger is (ov_render)
         if (c->kind == OV_DPAD) {
-            for (int k = 0; k < 4; k++) { float ox, oy, dr; ov_dpad_dir(k, &ox, &oy, &dr); ov_circle(px, w, h, b[0] + ox * b[2], b[1] + oy * b[2], dr * b[2], 2.5f); }
+            for (int k = 0; k < 4; k++) { float ox, oy, dr; ov_dpad_dir(k, &ox, &oy, &dr); ov_circle(px, w, h, b[0] + ox * b[2], b[1] + oy * b[2], dr * b[2], 1.25f); }
             continue;
         }
-        if (ov_round(c)) ov_circle(px, w, h, b[0], b[1], b[2], c->kind == OV_BUTTON ? 2.5f : 3.0f);
-        else ov_box_ring(px, w, h, c, b, 2.5f);
+        if (ov_round(c)) ov_circle(px, w, h, b[0], b[1], b[2], c->kind == OV_BUTTON ? 1.25f : 1.5f);   // thin lines (half the old 2.5/3): less of the game hidden behind the pad; the raster is half the window, so 2.5-3 px on screen
+        else ov_box_ring(px, w, h, c, b, 1.25f);
         int ls = ts; while (ls > 1 && PF_CAP * ls > fminf(b[2], b[3])) ls--;   // smaller on a small button (-, +)
         if (c->label[0]) ov_text(px, w, h, b[0], b[1], c->label, ls);
     }
@@ -631,12 +631,12 @@ static void ov_raster(uint8_t *px, uint32_t w, uint32_t h, uint32_t sh) {
     for (int i = 0; i < SP_N; i++) {   // the sprites (the knobs are drawn only as sprites, where the finger has them)
         float x = g_ov.sp[i][0], y = g_ov.sp[i][1], r = g_ov.sp[i][2], b[4] = {x, y, r, g_ov.sp[i][3]}; if (!r) continue;
         if (i == SP_DISC) cv_disc(&strip, x, y, r, C_WHITE);
-        else if (i == SP_RING) ov_circle(px, w, h + sh, x, y, r, 3.0f);   // (as ov_raster's stick ring above)
+        else if (i == SP_RING) ov_circle(px, w, h + sh, x, y, r, 1.5f);   // (as ov_raster's stick ring above)
         else if (i >= SP_GREEN && i <= SP_GREY) { static const uint8_t k[4][4] = {{80, 220, 100, 255}, {255, 210, 40, 255}, {240, 70, 60, 255}, {120, 140, 160, 255}}; cv_rrect(&strip, x - r, y - r, x + r, y + r, 0, k[i - SP_GREEN]); }
         else if (i == SP_BLACK || i == SP_WHITE || i == SP_ACCENT) { static const uint8_t k[4] = {0, 0, 0, 255}; cv_rrect(&strip, x - r, y - r, x + r, y + r, 0, i == SP_BLACK ? k : i == SP_WHITE ? C_WHITE : C_ACCENT); }
         else if (OV_CTLS[i].kind == OV_MENU) ov_menu_icon(&strip, &OV_CTLS[i], b);
         else if (OV_CTLS[i].kind == OV_BUTTON) cv_box(&strip, &OV_CTLS[i], b, fminf(b[2], b[3]) * 0.07f, C_WHITE);   // inset as the disc's 0.93
-        else ov_circle(px, w, h + sh, x, y, r, 2.5f);
+        else ov_circle(px, w, h + sh, x, y, r, 1.25f);
     }
 }
 typedef struct { float pos[4], uv[4], alpha; } ov_quad;
