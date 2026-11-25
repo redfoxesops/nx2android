@@ -80,6 +80,7 @@ __attribute__((weak)) int dm_overlay_custom(int layout, int ctl, float *x, float
 __attribute__((weak)) int dm_overlay_custom_ver(void) { return 0; }
 __attribute__((weak)) int dm_overlay_hidden(int layout, int ctl) { (void)layout; (void)ctl; return 0; }
 __attribute__((weak)) int dm_overlay_off(int layout, int ctl) { (void)layout; (void)ctl; return 0; }
+__attribute__((weak)) int dm_overlay_float(int stick, float *x, float *y) { (void)stick; (void)x; (void)y; return 0; }
 __attribute__((weak)) float dm_overlay_opacity(void) { return 0.6f; }
 __attribute__((weak)) int dm_overlay_layout(void) { return 0; }
 __attribute__((weak)) int dm_text_entry(char *title, int tcap, char *text, int xcap, int *sel, int *shift) { (void)title; (void)tcap; (void)text; (void)xcap; (void)sel; (void)shift; return 0; }
@@ -220,7 +221,7 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImage
 // counter's characters (OV_FPS_CHARS, gh rows: one cell each), from which the counter is put together on every present, so a changing number needs no upload.
 // With a theme in the APK (overlay_theme.c), the gamepad is its sprites instead: an atlas per layout in a texture of its own (g_tt), uploaded once, every
 // control drawn from it on each present; the procedural layer is then only the menu's panel, the dimming and the counter.
-enum { SP_DISC = OV_N, SP_BLACK, SP_WHITE, SP_ACCENT, SP_GREEN, SP_AMBER, SP_RED, SP_GREY, SP_N };   // (black, white, accent: solid blocks, the dimming and the layout editor's frames; green, amber, red, grey: the frame-time graph's bars and target line)
+enum { SP_DISC = OV_N, SP_BLACK, SP_WHITE, SP_ACCENT, SP_GREEN, SP_AMBER, SP_RED, SP_GREY, SP_RING, SP_N };   // SP_RING: a floating stick's ring (dm_overlay_float), drawn where the finger put it   // (black, white, accent: solid blocks, the dimming and the layout editor's frames; green, amber, red, grey: the frame-time graph's bars and target line)
 #define OV_FPS_CHARS "0123456789 FPS-CBATOURNIQM.DELGV"   // (the temperature rows: "SOC 52C", "BAT 38C"; the driver row: "TURNIP 27.0.0", "QCOM 512.676.53", "NVIDIA ...", "ID 1AB2 ...")
 static struct { VkImage img; VkDeviceMemory mem; VkImageView view; VkSampler samp; VkDescriptorSetLayout dsl; VkPipelineLayout layout; VkDescriptorPool pool; VkDescriptorSet set;
                 VkPipeline pipe; VkFormat pfmt; uint32_t w, h, sh, pw, ph, gh, gs, gl, cpr, pad; int fk; VkBuffer up; VkDeviceMemory upm; uint8_t *px, *map; int uploaded, panel, lay, cver; float sp[SP_N][4];
@@ -268,11 +269,12 @@ static int ov_round(const ov_ctl *c) { return c->w == c->h; }
 static uint32_t ov_layout_sprites(uint32_t w, uint32_t h) {   // places the sprites, returns the strip's height
     // in rows under the gamepad: a sprite that does not fit in w starts a new row (large controls, or the layout editor's, on a narrow raster would otherwise put the
     // last sprites, the graph's colour blocks among them, past the texture's edge, where the clamp-to-edge sampler gives transparent texels); each row is as tall as its tallest sprite
-    float x = 4, top = (float)h, mr = 0, disc = 0, b[4]; int row[SP_N], nrow = 0; float rmr[SP_N] = {0};
-    for (int i = 0; i < OV_N; i++) { ov_box(&OV_CTLS[i], (float)w, (float)h, b); if (OV_CTLS[i].kind == OV_BUTTON && ov_round(&OV_CTLS[i]) && b[2] > disc) disc = b[2]; }
+    float x = 4, top = (float)h, mr = 0, disc = 0, ring = 0, b[4]; int row[SP_N], nrow = 0; float rmr[SP_N] = {0};
+    for (int i = 0; i < OV_N; i++) { ov_box(&OV_CTLS[i], (float)w, (float)h, b); if (OV_CTLS[i].kind == OV_BUTTON && ov_round(&OV_CTLS[i]) && b[2] > disc) disc = b[2];
+        if ((OV_CTLS[i].kind == OV_STICK_L || OV_CTLS[i].kind == OV_STICK_R) && b[2] > ring) ring = b[2]; }
     for (int i = 0; i < SP_N; i++) {
         const ov_ctl *c = i < OV_N ? &OV_CTLS[i] : NULL; float hw = 0, hh = 0;
-        if (!c) hw = hh = i == SP_DISC ? disc : 6;
+        if (!c) hw = hh = i == SP_DISC ? disc : i == SP_RING ? ring : 6;
         else { ov_box(c, (float)w, (float)h, b);
             if (c->kind == OV_STICK_L || c->kind == OV_STICK_R) hw = hh = b[2] * OV_KNOB;
             else if (c->kind == OV_MENU || (c->kind == OV_BUTTON && !ov_round(c))) { hw = b[2]; hh = b[3]; } }   // a wider button's glow is its own shape
@@ -406,6 +408,7 @@ static const char *ovm_label(int it) {
     case OVM_EXPORT: return TR("Export save", "导出存档");
     case OVM_IMPORT: return TR("Import save", "导入存档");
     case OVM_PAD: return TR("Face buttons", "按键布局");
+    case OVM_FLOAT: return TR("Floating sticks", "浮动摇杆");
     case OVM_AUDIO: return TR("Audio output", "音频输出");
     case OVM_ROW_FPS: return TR("FPS row", "帧率行");
     case OVM_ROW_SOC: return TR("SOC row", "SoC 行");
@@ -481,7 +484,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st) {
             cv_rrect(cv, t[0], t[1] - th / 2, t[0] + f * t[2], t[1] + th / 2, th / 2, C_ACCENT);
             cv_disc(cv, t[0] + f * t[2], t[1], kr, C_WHITE);
             char v[8]; snprintf(v, sizeof v, "%d%%", op); cv_text(cv, x1 - cv_text_w(v, is), cy, v, is, C_WHITE);
-        } else if (it == OVM_EXPORT && (st >> 20 & 15) != OVX_IDLE) {   // the export's outcome in place of its button: its name, or why there is none
+        } else if (it == OVM_EXPORT && (st >> 20 & 7) != OVX_IDLE) {   // the export's outcome in place of its button: its name, or why there is none
             char nm[64], v[80]; int x = dm_save_note(nm, sizeof nm), vs = is;
             snprintf(v, sizeof v, "%s", x == OVX_BUSY ? TR("Exporting...", "导出中...") : x == OVX_DONE ? nm : x == OVX_NOSAVE ? TR("No save yet", "还没有存档") : TR("Failed", "失败"));
             while (vs > 1 && cv_text_w(v, vs) > rw - cv_text_w(lbl, is) - gap - rh * 0.3f) vs--;
@@ -501,7 +504,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st) {
             cv_rrect(cv, x0 + cur * segw, cy - hh / 2, x0 + (cur + 1) * segw, cy + hh / 2, hh / 2, C_ACCENT);
             for (int k = 0; k < 2; k++) cv_text(cv, x0 + k * segw + (segw - cv_text_w(seg[k], is)) / 2, cy, seg[k], is, k == cur ? C_WHITE : C_DIM);
         } else {   // a switch
-            int on = it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH ? fpso_rows(fo) >> (it - OVM_ROW_FPS) & 1 : st >> (it == OVM_OVERLAY ? 0 : it == OVM_RUMBLE ? 1 : 3) & 1; float sx0 = x1 - sw;
+            int on = it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH ? fpso_rows(fo) >> (it - OVM_ROW_FPS) & 1 : st >> (it == OVM_OVERLAY ? 0 : it == OVM_RUMBLE ? 1 : it == OVM_FLOAT ? 23 : 3) & 1; float sx0 = x1 - sw;
             cv_rrect(cv, sx0, cy - sh / 2, x1, cy + sh / 2, sh / 2, on ? C_ACCENT : C_OFF);
             cv_disc(cv, on ? x1 - sh / 2 : sx0 + sh / 2, cy, sh / 2 - fmaxf(2, sh * 0.1f), on ? C_WHITE : C_KNOB_OFF);
             const char *word = on ? TR("ON", "开") : TR("OFF", "关"); cv_text(cv, sx0 - gap - cv_text_w(word, is), cy, word, is, on ? C_WHITE : C_DIM);
@@ -614,6 +617,7 @@ static void ov_raster(uint8_t *px, uint32_t w, uint32_t h, uint32_t sh) {
     for (int i = 0; i < OV_N && g_tt[g_ov.lay].ready != 1; i++) {   // (with a theme the controls are its sprites: the static layer stays empty)
         const ov_ctl *c = &OV_CTLS[i]; float b[4]; ov_box(c, (float)w, (float)h, b);
         if (c->kind == OV_MENU || ov_off(c)) continue;   // a sprite only; hidden by the player (the editor's open and close rasterize again)
+        { float fx, fy; if ((c->kind == OV_STICK_L || c->kind == OV_STICK_R) && dm_overlay_float(c->kind == OV_STICK_R, &fx, &fy)) continue; }   // floating: SP_RING, where the finger is (ov_render)
         if (c->kind == OV_DPAD) {
             for (int k = 0; k < 4; k++) { float ox, oy, dr; ov_dpad_dir(k, &ox, &oy, &dr); ov_circle(px, w, h, b[0] + ox * b[2], b[1] + oy * b[2], dr * b[2], 2.5f); }
             continue;
@@ -627,6 +631,7 @@ static void ov_raster(uint8_t *px, uint32_t w, uint32_t h, uint32_t sh) {
     for (int i = 0; i < SP_N; i++) {   // the sprites (the knobs are drawn only as sprites, where the finger has them)
         float x = g_ov.sp[i][0], y = g_ov.sp[i][1], r = g_ov.sp[i][2], b[4] = {x, y, r, g_ov.sp[i][3]}; if (!r) continue;
         if (i == SP_DISC) cv_disc(&strip, x, y, r, C_WHITE);
+        else if (i == SP_RING) ov_circle(px, w, h + sh, x, y, r, 3.0f);   // (as ov_raster's stick ring above)
         else if (i >= SP_GREEN && i <= SP_GREY) { static const uint8_t k[4][4] = {{80, 220, 100, 255}, {255, 210, 40, 255}, {240, 70, 60, 255}, {120, 140, 160, 255}}; cv_rrect(&strip, x - r, y - r, x + r, y + r, 0, k[i - SP_GREEN]); }
         else if (i == SP_BLACK || i == SP_WHITE || i == SP_ACCENT) { static const uint8_t k[4] = {0, 0, 0, 255}; cv_rrect(&strip, x - r, y - r, x + r, y + r, 0, i == SP_BLACK ? k : i == SP_WHITE ? C_WHITE : C_ACCENT); }
         else if (OV_CTLS[i].kind == OV_MENU) ov_menu_icon(&strip, &OV_CTLS[i], b);
@@ -821,7 +826,8 @@ static void ov_render(VkCommandBuffer cb, int mode, int menu, int fps) {
         ov_rect(cb, 0, 0, W, H, 0, 0, (float)g_ov.w, (float)g_ov.h, fo);
         for (int i = 0; i < OV_N; i++) { const ov_ctl *c = &OV_CTLS[i]; float b[4]; ov_box(c, W, H, b); if (ov_off(c)) continue;
             if (c->kind == OV_STICK_L || c->kind == OV_STICK_R) {
-                float dx, dy; dm_overlay_knob(c->kind == OV_STICK_R, &dx, &dy); float travel = b[2] * (1 - OV_KNOB);   // the knob's edge reaches the ring
+                float dx, dy, fx, fy; dm_overlay_knob(c->kind == OV_STICK_R, &dx, &dy); float travel = b[2] * (1 - OV_KNOB);   // the knob's edge reaches the ring
+                if (dm_overlay_float(c->kind == OV_STICK_R, &fx, &fy)) ov_sprite(cb, SP_RING, b[0], b[1], b[2], fo);   // (ov_off: only while a finger holds it)
                 ov_sprite(cb, i, b[0] + dx * travel, b[1] + dy * travel, b[2] * OV_KNOB, fo);
             } else if (c->kind == OV_BUTTON) { float g = ov_glow(dm_overlay_pressed(i, 0), now); if (g <= 0) continue;
                 if (!ov_round(c)) ov_sprite(cb, i, b[0], b[1], b[2], g); else ov_sprite(cb, SP_DISC, b[0], b[1], b[2] * 0.93f, g); }

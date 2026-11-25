@@ -28,6 +28,7 @@ float dm_overlay_scale(void) { return 1; }
 int dm_external_active(void) { return 0; }
 int dm_overlay_dpi(void) { return 0; }
 int dm_overlay_off(int l, int c) { return l == 1 && c == hidden_ctl; }
+int dm_overlay_float(int stick, float *x, float *y) { (void)stick; (void)x; (void)y; return 0; }
 int dm_overlay_custom(int layout, int ctl, float *x, float *y, float *s) {
     *s = 1;
     if (layout == 1 && custom_faces && (ctl == custom_a || ctl == custom_x)) {
@@ -93,10 +94,10 @@ int main(void) {
     assert(ov_drag_pos(1100, 600, 1013, 50) == 506.5f);
     assert(ov_drag_pos(1100, 505, 1013, 50) == 508);
 
-    assert(ov_menu_item(0, OVM_ROWS - 2) == OVM_PAD && ov_menu_item(1, OVM_ROWS - 2) == -1);
+    assert(ov_menu_item(0, OVM_ROWS - 3) == OVM_PAD && ov_menu_item(1, OVM_ROWS - 3) == -1 && ov_menu_item(0, OVM_ROWS - 2) == OVM_FLOAT);
     assert(ov_menu_item(1, OVM_ROWS - 1) == OVM_RESUME);
     audio_available = 1;
-    assert(ov_menu_item(1, OVM_ROWS - 2) == OVM_AUDIO);
+    assert(ov_menu_item(1, OVM_ROWS - 3) == OVM_AUDIO);
     ui_zh = 0;
     assert(!strcmp(OVM_TAB_NAMES[0], "Gamepad") && !strcmp(OVM_TAB_NAMES[1], "Game") && !strcmp(OVM_TAB_NAMES[2], "Counter") && !strcmp(OVM_TAB_NAMES[3], "Style"));
     assert(!strcmp(FPSO_POS_NAMES[0], "Top left") && !strcmp(FPSO_SIZE_NAMES[3], "Extra large"));
@@ -162,6 +163,7 @@ float dm_overlay_scale(void) { return g_s; }
 int dm_external_active(void) { return 0; }
 int dm_overlay_dpi(void) { return 0; }
 int dm_overlay_custom(int layout, int ctl, float *x, float *y, float *s) { (void)layout; *s = 1; if (ctl != g_cust) return 0; *x = g_cx; *y = g_cy; return 1; }
+int dm_overlay_float(int stick, float *x, float *y) { (void)stick; (void)x; (void)y; return 0; }
 static float gap(const ov_ctl *a, const float p[4], const ov_ctl *b, const float q[4]) {   // < 0: they overlap (round ones as circles, the rest as boxes)
     float dx = fabsf(p[0] - q[0]), dy = fabsf(p[1] - q[1]);
     if (a->w == a->h && b->w == b->h) return hypotf(dx, dy) - p[2] - q[2];
@@ -234,6 +236,7 @@ int dm_external_active(void) { return g_ext; }
 static int g_dpi;
 int dm_overlay_dpi(void) { return g_dpi; }
 int dm_overlay_custom(int layout, int ctl, float *x, float *y, float *s) { (void)layout; *s = 1; if (ctl != g_cust) return 0; *x = g_cx; *y = g_cy; return 1; }
+int dm_overlay_float(int stick, float *x, float *y) { (void)stick; (void)x; (void)y; return 0; }
 static float gap(const ov_ctl *a, const float p[4], const ov_ctl *b, const float q[4]) {
     float dx = fabsf(p[0] - q[0]), dy = fabsf(p[1] - q[1]);
     if (a->w == a->h && b->w == b->h) return hypotf(dx, dy) - p[2] - q[2];

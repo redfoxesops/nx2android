@@ -39,7 +39,7 @@ class OverlayVisibility(unittest.TestCase):
 #include "stick_axis.h"
 static _Atomic int g_set_overlay, g_overlay, g_pads, g_edit, g_menu_btn = 1;
 static _Atomic int g_cust[2][2][OV_N][4];
-static _Atomic int g_set_rumble, g_set_fps, g_set_labels, g_menu_tab, g_sv_st;
+static _Atomic int g_set_rumble, g_set_fps, g_set_labels, g_menu_tab, g_sv_st, g_set_float, g_cust_ver;
 static int layout, saves;
 int dm_overlay_layout(void) { return layout; }
 float dm_overlay_scale(void) { return 1; }
@@ -382,8 +382,35 @@ static void edge_stick(void) {
     }
 }
 
+// Floating sticks (dm_overlay_float): a stick is hidden until a touch on a spot no control takes brings its half's stick there, centred on the finger,
+// and hidden again when the finger lifts; the game's touch screen gets nothing while they are on; the layout editor shows the sticks where they are
+static void floating_sticks(void) {
+    width = layout ? 2400 : 1920; height = 1080;
+    atomic_store(&g_set_overlay, 1); atomic_store(&g_overlay, 1); atomic_store(&g_pads, 0); atomic_store(&g_set_float, 1);
+    int sl = -1, sr = -1; for (int i = 0; i < OV_N; i++) { if (OV_CTLS[i].kind == OV_STICK_L) sl = i; if (OV_CTLS[i].kind == OV_STICK_R) sr = i; }
+    assert(sl >= 0 && sr >= 0 && dm_overlay_off(layout, sl) && dm_overlay_off(layout, sr));
+    for (int s = 0; s < 2; s++) {
+        int k = s ? sr : sl, o = s ? sl : sr; float b[4];
+        AInputEvent t = {.source = AINPUT_SOURCE_TOUCHSCREEN, .type = AINPUT_EVENT_TYPE_MOTION, .action = AMOTION_EVENT_ACTION_DOWN, .x = width * (s ? 0.6f : 0.4f), .y = height * 0.3f};
+        assert(ctl_at(t.x, t.y, width, height) < 0);
+        assert(handle_event(&t) == 1 && touches == 0 && !dm_overlay_off(layout, k) && dm_overlay_off(layout, o));
+        ov_box(&OV_CTLS[k], width, height, b); assert(fabsf(b[0] - t.x) < 1 && fabsf(b[1] - t.y) < 1 && touch_sticks[2 * s] == 0);
+        t.action = 5; t.x += b[2] * 0.5f; assert(handle_event(&t) == 1 && touch_sticks[2 * s] > 0 && touches == 0);
+        t.action = AMOTION_EVENT_ACTION_UP; assert(handle_event(&t) == 1 && touch_sticks[2 * s] == 0 && dm_overlay_off(layout, k));
+    }
+    float fx, fy;
+    atomic_store(&g_edit, 1); assert(!dm_overlay_float(0, &fx, &fy) && !dm_overlay_off(layout, sl)); atomic_store(&g_edit, 0);
+    atomic_store(&g_set_float, 0); saves = 0;   // off: the same touch is the game's again
+    AInputEvent t = {.source = AINPUT_SOURCE_TOUCHSCREEN, .type = AINPUT_EVENT_TYPE_MOTION, .action = AMOTION_EVENT_ACTION_DOWN, .x = width * 0.4f, .y = height * 0.3f};
+    assert(handle_event(&t) == 1 && touches == 1 && !dm_overlay_off(layout, sl));
+    t.action = AMOTION_EVENT_ACTION_UP; assert(handle_event(&t) == 1);
+    int v = atomic_load(&g_cust_ver); menu_do(OVM_FLOAT);   // the menu's switch: saved, and the theme-less layer rasterized again
+    assert(atomic_load(&g_set_float) && saves == 1 && atomic_load(&g_cust_ver) == v + 1); menu_do(OVM_FLOAT); assert(!atomic_load(&g_set_float));
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2); int test = atoi(argv[1]);
+    if (test == 12) { for (layout = 0; layout < 2; layout++) floating_sticks(); return 0; }
     if (test == 10) { players(); return 0; }
     if (test == 11) { for (layout = 0; layout < 2; layout++) edge_stick(); return 0; }
     if (test == 9) { for (layout = 0; layout < 2; layout++) no_menu_button(); return 0; }
@@ -464,6 +491,9 @@ int main(int argc, char **argv) {
 
     def test_each_controller_is_a_player_of_its_own(self):
         self.run_case(10)
+
+    def test_floating_sticks_appear_under_the_finger(self):
+        self.run_case(12)
 
 
 if __name__ == '__main__':
