@@ -19,7 +19,7 @@ enum { DM_FG_OFF = 0, DM_FG_GENERATING = 1, DM_FG_ON_NOT_GENERATING = 2, DM_FG_U
 // The present thread's per-frame entry: fills gen[0..return) with the generated frames' images (stable until the
 // next rebuild), *hold is the interval each presented image holds, *out_period the rate the window should ask
 // for. 0 generated = the frame is presented alone.
-int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], double *hold, double *out_period);
+int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], VkImageView gen_view[3], double *hold, double *out_period);
 
 // The drawer's live switch and status line (the reason string follows the state int, Banana's "<state> <reason>")
 void dm_fg_set(int on, int multiplier, int target_rate, int flow_pct);

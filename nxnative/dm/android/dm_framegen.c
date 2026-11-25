@@ -49,8 +49,8 @@ int dm_fg_status(char *buf, int n) {
 }
 
 #ifndef NX_LSFG
-int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], double *hold, double *out_period) {
-    (void)im; (void)crop; (void)period; (void)gen;
+int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], VkImageView gen_view[3], double *hold, double *out_period) {
+    (void)im; (void)crop; (void)period; (void)gen; (void)gen_view;
     settings_init(); *hold = 0; *out_period = 0;
     if (atomic_load(&g_on) > 0) { atomic_store(&g_state, -1); reason("%s", "not in this build (built without NX_LSFG)"); }
     return 0;
@@ -148,7 +148,7 @@ static void full_barrier(VkCommandBuffer cb) {   // the game's writes to the win
     vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 
-int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], double *hold, double *out_period) {
+int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], VkImageView gen_view[3], double *hold, double *out_period) {
     settings_init();
     *hold = 0; *out_period = 0;
     int on = atomic_load(&g_on) > 0, mult = atomic_load(&g_mult), target = atomic_load(&g_target), flow = atomic_load(&g_flow);
@@ -226,7 +226,7 @@ int dm_fg_frame(vkimg_t *im, const int *crop, double period, VkImage gen[3], dou
     VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, 0, NULL, NULL, 1, &cb};
     pthread_mutex_lock(V.qmu); VkResult r = vk.vkQueueSubmit(V.q, 1, &si, F.fr[k].fence); pthread_mutex_unlock(V.qmu);
     if (r) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("frame generation submission %d", r); ng = 0; }
-    for (size_t g = 0; g < ng; g++) gen[g] = F.out[g];
+    for (size_t g = 0; g < ng; g++) { gen[g] = F.out[g]; gen_view[g] = F.out_view[g]; }
     double interval = F.pacer.smoothed_interval > 0 ? F.pacer.smoothed_interval : period;
     if (interval < period) interval = period;
     if (ng) *hold = interval / (double)(ng + 1);

@@ -1076,7 +1076,6 @@ uint64_t vk_refresh_cycle_ns(void) { return g_refresh_ns; }   // dm_framegen.h: 
 // swapchain, with the overlay drawn on top: the gamepad and the menus travel on every presented image, the generated ones included, or they would flicker at the
 // game's own rate. with_meta: the game frame's extras (the sRGB pick, the picture rect for the touch mapping); a generated frame follows what the game frame chose
 // and never flips (the chain was fed the texture upright). period: the interval this image holds (s); < 0 for a redraw (ticket 0)
-int vk_fg_images(void);   // (below: the images per game frame, 1 without frame generation)
 static VkFormat g_meta_srgb;   // the game frame's sRGB pick (present_window)
 // ---- super resolution (the pause menu's Super resolution, settings.txt sr): the game's picture goes into the window's larger picture rectangle through
 // SGSR 1.0's edge-direction filter (dm/android/shaders/sr.frag: one pass, its 12 taps as four textureGather reads, upscale and sharpening together)
@@ -1098,7 +1097,7 @@ static int sr_sharp(void) {   // the pause menu's Sharpness, percent (settings.t
     int v = e ? atoi(e) : dm_overlay_sharp();
     return v < 0 ? 0 : v > 100 ? 100 : v;
 }
-static int sr_ready(uint32_t k, vkimg_t *im) {   // the pipeline and present slot k's descriptor set; 0: the blit draws this frame instead
+static int sr_ready(uint32_t k, vkimg_t *im, VkImageView view) {   // the pipeline and present slot k's descriptor set for im, or for view (a generated frame's); 0: the blit draws this frame instead
     if (g_sr_dead) return 0;
     if (!g_sr.dsl) {
         VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
@@ -1143,16 +1142,16 @@ static int sr_ready(uint32_t k, vkimg_t *im) {   // the pipeline and present slo
         g_sr.pfmt = g_sfmt;
     }
     // the view lives with the image (img_drop frees it), so a recycled window texture's handle can never be sampled through an older image's view
-    if (!im->full) {
+    if (!view && !im->full) {
         VkImageViewCreateInfo vi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, NULL, 0, im->img, VK_IMAGE_VIEW_TYPE_2D, im->fmt, {0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, im->levels, 0, 1}};
         if (vkCreateImageView(V.dev, &vi, NULL, &im->full)) { im->full = VK_NULL_HANDLE; VKRED_ONCE(115, "super resolution: a view of the %ux%u picture: the blit scales it", im->w, im->h); return 0; }
     }
-    VkDescriptorImageInfo ii = {g_sr.samp, im->full, VK_IMAGE_LAYOUT_GENERAL};   // version 1 keeps every image in GENERAL
+    VkDescriptorImageInfo ii = {g_sr.samp, view ? view : im->full, VK_IMAGE_LAYOUT_GENERAL};   // version 1 keeps every image in GENERAL
     VkWriteDescriptorSet wr = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, g_sr.set[k], 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &ii};
     vkUpdateDescriptorSets(V.dev, 1, &wr, 0, NULL);   // this slot's fence was just waited, so its previous descriptor is no longer in use
     return 1;
 }
-static void present_one(vkimg_t *im, VkImage src, int cx, int cy, int cw, int ch, int flip, double period, uint64_t ticket, int with_meta) {
+static void present_one(vkimg_t *im, VkImage src, VkImageView gview, int cx, int cy, int cw, int ch, int flip, double period, uint64_t ticket, int with_meta) {
     uint32_t k = g_pi++ % 8;
     // A redraw is not worth a freeze: this device's kgsl or compositor can hold a fence or a buffer for half a second, and waiting it out stalls the whole menu. Wait
     // 30 ms at most and give the frame up; the next redraw, 33 ms on, tries again with the newest state. Game frames still wait without a bound
@@ -1180,14 +1179,16 @@ static void present_one(vkimg_t *im, VkImage src, int cx, int cy, int cw, int ch
     // the panel's raster is uploaded before the target's rendering scope starts, so the overlay can draw inside it
     int ovon = (ovm || menu >= 0 || fps) && overlay_ready(cb, k, menu) && (V.has_dynrender || ov_fb(idx));
     // a picture that grows by at least a sixteenth goes through SGSR 1.0; one that shrinks or fits stays with the blit (the same cost, no filter)
-    // (a game frame only, and not while frame generation adds images: a generated image has no vkimg_t to sample, and filtering one frame in two would shimmer)
-    int sr = im && vk_fg_images() == 1 && sr_on() && dw * 16 >= cw * 17 && V.has_dynrender && im->samples == 1 && im->layers == 1 && im->d == 1 && sr_ready(k, im);
+    // (the frame generation's images too, through their own views (gview, the crop's size, upright): every presented image is filtered alike, or one in two
+    // would be softer and the picture would shimmer)
+    uint32_t iw = im ? im->w : (uint32_t)cw, ih = im ? im->h : (uint32_t)ch;
+    int sr = (gview || (im && im->samples == 1 && im->layers == 1 && im->d == 1)) && sr_on() && dw * 16 >= cw * 17 && V.has_dynrender && sr_ready(k, im, gview);
     static int sr_was = -1, sr_ws = -1; static uint32_t sr_lw, sr_ldw;   // the log follows the switch, a new picture size and a new sharpness, not every frame
     int sh = sr ? sr_sharp() : 0;
-    if (sr && (sr_was != 1 || sr_lw != im->w || sr_ldw != (uint32_t)dw || sr_ws != sh))
-        VKLOG("[perf] super resolution on: SGSR 1.0 (edge direction) %ux%u into %ux%u, sharpness %d%%", im->w, im->h, (uint32_t)dw, (uint32_t)dh, sh);
+    if (with_meta && sr && (sr_was != 1 || sr_lw != iw || sr_ldw != (uint32_t)dw || sr_ws != sh))
+        VKLOG("[perf] super resolution on: SGSR 1.0 (edge direction) %ux%u into %ux%u, sharpness %d%%", iw, ih, (uint32_t)dw, (uint32_t)dh, sh);
     else if (with_meta && !sr && sr_was == 1) VKLOG("[perf] super resolution off: the blit scales the picture");
-    if (with_meta) { sr_was = sr; sr_lw = im->w; sr_ldw = (uint32_t)dw; sr_ws = sh; }
+    if (with_meta) { sr_was = sr; sr_lw = iw; sr_ldw = (uint32_t)dw; sr_ws = sh; }
     VkImageLayout lay;
     if (sr) {
         // One rendering scope for the upscale and the overlay: dynamic rendering needs no render pass, and the game's picture is read (12 taps) and
@@ -1200,10 +1201,10 @@ static void present_one(vkimg_t *im, VkImage src, int cx, int cy, int cw, int ch
         vkCmdBeginRendering(cb, &ri);
         VkViewport vp = {0, 0, (float)g_sext.width, (float)g_sext.height, 0, 1}; VkRect2D sc = {{0, 0}, g_sext};
         vkCmdSetViewport(cb, 0, 1, &vp); vkCmdSetScissor(cb, 0, 1, &sc);
-        sr_push pc = {{1.0f / im->w, 1.0f / im->h, (float)im->w, (float)im->h},
+        sr_push pc = {{1.0f / iw, 1.0f / ih, (float)iw, (float)ih},
                       {(float)dx * 2 / g_sext.width - 1, (float)dy * 2 / g_sext.height - 1, (float)(dx + dw) * 2 / g_sext.width - 1, (float)(dy + dh) * 2 / g_sext.height - 1},
-                      {(float)cx / im->w, (float)cy / im->h, (float)(cx + cw) / im->w, (float)(cy + ch) / im->h},
-                      vk_window_bottom_up() ? 1.0f : 0.0f, (float)sh / 100.0f};
+                      {(float)cx / iw, (float)cy / ih, (float)(cx + cw) / iw, (float)(cy + ch) / ih},
+                      flip && vk_window_bottom_up() ? 1.0f : 0.0f, (float)sh / 100.0f};
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sr.pipe);
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sr.layout, 0, 1, &g_sr.set[k], 0, NULL);
         vkCmdPushConstants(cb, g_sr.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
@@ -1285,7 +1286,7 @@ static void crop_of(vkimg_t *im, const int crop[4], int *cx, int *cy, int *cw, i
 static void present_window(vkimg_t *im, const int crop[4], double period, uint64_t ticket) {   // period: the game's frame period (s); < 0 for a redraw (ticket 0)
     int cx, cy, cw, ch; crop_of(im, crop, &cx, &cy, &cw, &ch);
     g_meta_srgb = im->fmt == VK_FORMAT_R8G8B8A8_SRGB || im->fmt == VK_FORMAT_B8G8R8A8_SRGB || im->fmt == VK_FORMAT_A8B8G8R8_SRGB_PACK32 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-    present_one(im, im->img, cx, cy, cw, ch, 1, period, ticket, 1);
+    present_one(im, im->img, VK_NULL_HANDLE, cx, cy, cw, ch, 1, period, ticket, 1);
 }
 // The frame generation (dm_framegen.c): the output stream's period (ns; 0 = off), the rate the window asks the system for so the panel can carry the extra images
 // (a FIFO swapchain carries one image a refresh: at the game's own rate the present thread falls behind and the game waits on it), and the images per game frame
@@ -1294,11 +1295,11 @@ int vk_fg_images(void) { return atomic_load(&g_lsfg_images); }   // perf_android
 // A game frame through the frame generation: its generated frames first, each held for an equal share of the interval, then the game's own frame (holding its
 // share too: stepping by the game's period instead spaced the desired present times unevenly)
 static void present_game(vkimg_t *im, const int crop[4], double period, uint64_t ticket) {
-    VkImage gen[3] = {0}; double hold = 0, out_period = 0;
-    int ng = dm_fg_frame(im, crop, period, gen, &hold, &out_period);
+    VkImage gen[3] = {0}; VkImageView gview[3] = {0}; double hold = 0, out_period = 0;
+    int ng = dm_fg_frame(im, crop, period, gen, gview, &hold, &out_period);
     atomic_store(&g_lsfg_out_ns, out_period > 0 ? (uint64_t)(out_period * 1e9) : 0); atomic_store(&g_lsfg_images, ng > 0 ? ng + 1 : 1);
     int cx, cy, cw, ch; crop_of(im, crop, &cx, &cy, &cw, &ch);
-    for (int g = 0; g < ng; g++) present_one(NULL, gen[g], 0, 0, cw, ch, 0, hold, 0, 0);   // (the chain's images are the crop's size, upright)
+    for (int g = 0; g < ng; g++) present_one(NULL, gen[g], gview[g], 0, 0, cw, ch, 0, hold, 0, 0);   // (the chain's images are the crop's size, upright)
     present_window(im, crop, ng ? hold : period, ticket);
 }
 // headless frame shots
