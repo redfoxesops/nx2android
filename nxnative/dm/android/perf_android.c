@@ -297,6 +297,12 @@ static int fps_cap_step(void) {
     if (s < 0) { s = dm_fps_ceiling() == 30 ? 2 : 0; if (s) LOG("[perf] frame rate capped at 30 fps (the profile's fps_ceiling; porter's --fps60 lifts it)"); }
     return s;
 }
+// The rate the frames are held to now (60, 40 or 30 fps): the frame generation needs it (its frame's period is never shorter than the rate allows, or a game held
+// to 30 fps would be counted as one refresh short and the generation would ask for more frames than the panel can show)
+int dm_perf_rate_fps(void) { return (int)(1000000000ll / STEPS[g_step]); }
+// The frame generation's images per game frame (1 = the game alone; gfx_vk_present.c's strong one wins). With it on the present thread presents more images per
+// game frame, so the game's wait for it is longer by design: a pace, not work (or the adaptive rate steps down while the frame generation runs)
+__attribute__((weak)) int vk_fg_images(void) { return 1; }
 static int64_t g_period_now;   // the period dm_present_period_adapt last returned (the game's, or the adaptive step's when longer), ns
 double dm_perf_period_ms(void) { int64_t p = __atomic_load_n(&g_period_now, __ATOMIC_RELAXED); return p > 0 ? (double)p / 1e6 : 0; }   // the frame-time graph's target (gfx_vk_present.c); 0: not known yet
 static uint64_t period_adapt(uint64_t period);
@@ -416,7 +422,7 @@ void dm_perf_frame(double period) {
     { static unsigned n; if (++n % 60 == 0) gpu_turbo(); }
     if (g_work_start) {   // (a longer span: the game was held, by the pause menu or the background)
         int64_t w = g_prev_present ? t - g_prev_present - g_pace : t - g_work_start;
-        int64_t pq = g_prev_present ? g_pq : 0, pace = g_step > 0 ? pq : 0;   // (t - g_work_start starts after the wait already)
+        int64_t pq = g_prev_present ? g_pq : 0, pace = g_step > 0 || vk_fg_images() > 1 ? pq : 0;   // (t - g_work_start starts after the wait already)
         if (w > 0 && w < 250000000) { adapt_frame(w - pace > 0 ? w - pace : 0, t); if (g_hint) hint_report(w, pq, pace, t, g_hint_target); }
         g_work_start = 0;
     }

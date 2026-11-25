@@ -3,6 +3,7 @@
 // presented with FIFO (vsync) pacing. Headless (dmhost from adb shell): frames are counted, and DM_VK_SHOT=n1,n2,... writes those presented frames as PPM files to
 // DM_VK_SHOT_DIR (default DM_ROOT), which is how a run without a screen is checked.
 #include "gfx_vk.h"
+#include "dm_framegen.h"   // the frame generation (present_game)
 #include "dm_pacing.h"   // the frame-pacing policy
 #include <android/native_window.h>
 #include <jni.h>
@@ -409,6 +410,8 @@ static const char *ovm_label(int it) {
     case OVM_IMPORT: return TR("Import save", "导入存档");
     case OVM_PAD: return TR("Face buttons", "按键布局");
     case OVM_FLOAT: return TR("Floating sticks", "浮动摇杆");
+    case OVM_LSFG: return TR("Frame gen", "补帧");
+    case OVM_FLOW: return TR("Flow scale", "光流比例");
     case OVM_AUDIO: return TR("Audio output", "音频输出");
     case OVM_ROW_FPS: return TR("FPS row", "帧率行");
     case OVM_ROW_SOC: return TR("SOC row", "SoC 行");
@@ -434,11 +437,13 @@ static const char *ovm_button(int it) {
 }
 static const char *ovm_mode(int i) { return i ? TR("Docked", "底座") : TR("Handheld", "掌机"); }
 static const char *ovm_pad(int i) { return i ? TR("Label", "标签") : TR("Position", "位置"); }   // a controller's face buttons (front_android.c pad_labels)
-static int ov_val_n(int it) { return it == OVM_POS ? FPSO_POS_N : it == OVM_COLOUR ? FPSO_COLOUR_N : it == OVM_OUTLINE ? FPSO_OUTLINE_N : it == OVM_SIZE ? FPSO_SIZE_N : 0; }   // the choice rows' values
+__attribute__((weak)) int dm_lsfg_mode(void) { return 0; }   // front_android.c: frame generation off, or its multiplier
+static const char *ov_lsfg_name(int v) { static const char *const n[4] = {"", "2x", "3x", "4x"}; return v ? n[v] : TR("Off", "关"); }
+static int ov_val_n(int it) { return it == OVM_LSFG ? 4 : it == OVM_POS ? FPSO_POS_N : it == OVM_COLOUR ? FPSO_COLOUR_N : it == OVM_OUTLINE ? FPSO_OUTLINE_N : it == OVM_SIZE ? FPSO_SIZE_N : 0; }   // the choice rows' values
 static const char *ov_val_name(int it, int v) {
-    return it == OVM_POS ? FPSO_POS_NAMES[v] : it == OVM_COLOUR ? FPSO_COLOUR_NAMES[v] : it == OVM_OUTLINE ? FPSO_OUTLINE_NAMES[v] : FPSO_SIZE_NAMES[v];
+    return it == OVM_LSFG ? ov_lsfg_name(v) : it == OVM_POS ? FPSO_POS_NAMES[v] : it == OVM_COLOUR ? FPSO_COLOUR_NAMES[v] : it == OVM_OUTLINE ? FPSO_OUTLINE_NAMES[v] : FPSO_SIZE_NAMES[v];
 }
-static int ov_val_cur(int it, int o) { return it == OVM_POS ? fpso_pos(o) : it == OVM_COLOUR ? fpso_colour(o) : it == OVM_OUTLINE ? fpso_outline(o) : fpso_size(o); }
+static int ov_val_cur(int it, int o) { return it == OVM_LSFG ? (dm_lsfg_mode() ? dm_lsfg_mode() - 1 : 0) : it == OVM_POS ? fpso_pos(o) : it == OVM_COLOUR ? fpso_colour(o) : it == OVM_OUTLINE ? fpso_outline(o) : fpso_size(o); }
 static float ov_val_w(int it, int is) {   // the widest value's width
     float w = 0; for (int v = 0; v < ov_val_n(it); v++) w = fmaxf(w, cv_text_w(ov_val_name(it, v), is)); return w;
 }
@@ -456,7 +461,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st) {
                      : i == OVM_PAD  ? 2 * (fmaxf(cv_text_w(ovm_pad(0), is),  cv_text_w(ovm_pad(1), is))  + sh)
                      : btn ? cv_text_w(btn, is) + 2 * sh
                      : sw + gap + fmaxf(cv_text_w(TR("ON", "开"), is), cv_text_w(TR("OFF", "关"), is));
-            need = fmaxf(need, i == OVM_OPACITY ? fmaxf(lw / 0.38f, cv_text_w("80%", is) / 0.14f) : lw + gap + cw + rh * 0.3f);
+            need = fmaxf(need, i == OVM_OPACITY || i == OVM_FLOW ? fmaxf(lw / 0.38f, cv_text_w(i == OVM_FLOW ? "100%" : "80%", is) / 0.14f) : lw + gap + cw + rh * 0.3f);
         }
         float tabw = 0; for (int k = 0; k < OVM_TABS; k++) tabw = fmaxf(tabw, cv_text_w(OVM_TAB_NAMES[k], is));
         if (need <= rw && tabw < rw / OVM_TABS - sh) break;
@@ -477,8 +482,9 @@ static void ov_menu_panel(const ov_canvas *cv, int st) {
         if (it == OVM_RESUME) { const char *w = ovm_label(OVM_RESUME); cv_rrect(cv, r[0], r[1], r[0] + rw, r[1] + 1, 0.5f, C_LINE); cv_text(cv, r[0] + (rw - cv_text_w(w, is)) / 2, cy, w, is, C_ACCENT); continue; }
         const char *lbl = ovm_label(it), *btn = ovm_button(it);
         cv_text(cv, r[0] + rh * 0.15f, cy, lbl, is, row == sel ? C_WHITE : C_DIM);
-        if (it == OVM_OPACITY) {   // the slider: its track, filled to the value, the knob and the percent
-            float t[3]; ov_menu_track(p, row, t); float f = (float)(op - OV_OPACITY_MIN) / (OV_OPACITY_MAX - OV_OPACITY_MIN), th = fmaxf(2, rh * 0.08f), kr = rh * 0.20f;
+        if (it == OVM_OPACITY || it == OVM_FLOW) {   // a slider: its track, filled to the value (op: the open tab's, dm_menu_state), the knob and the percent
+            int lo = it == OVM_FLOW ? OV_FLOW_MIN : OV_OPACITY_MIN, hi = it == OVM_FLOW ? OV_FLOW_MAX : OV_OPACITY_MAX;
+            float t[3]; ov_menu_track(p, row, t); float f = (float)(op - lo) / (hi - lo), th = fmaxf(2, rh * 0.08f), kr = rh * 0.20f;
             f = f < 0 ? 0 : f > 1 ? 1 : f;
             cv_rrect(cv, t[0], t[1] - th / 2, t[0] + t[2], t[1] + th / 2, th / 2, C_OFF);
             cv_rrect(cv, t[0], t[1] - th / 2, t[0] + f * t[2], t[1] + th / 2, th / 2, C_ACCENT);
@@ -1055,14 +1061,19 @@ static uint64_t pace_desired(double period) {   // the frame's desired present t
     g_pace_target = t;
     return t - g_refresh_ns / 2;
 }
-static void present_window(vkimg_t *im, const int crop[4], double period, uint64_t ticket) {   // period: the game's frame period (s); < 0 for a redraw (ticket 0)
+uint64_t vk_refresh_cycle_ns(void) { return g_refresh_ns; }   // dm_framegen.h: the refresh cap's input (0 without display timing)
+// One presented image: the source (a game frame's window texture, or one of the frame generation's images), its picture rect inside the source, fitted into the
+// swapchain, with the overlay drawn on top: the gamepad and the menus travel on every presented image, the generated ones included, or they would flicker at the
+// game's own rate. with_meta: the game frame's extras (the sRGB pick, the picture rect for the touch mapping); a generated frame follows what the game frame chose
+// and never flips (the chain was fed the texture upright). period: the interval this image holds (s); < 0 for a redraw (ticket 0)
+static VkFormat g_meta_srgb;   // the game frame's sRGB pick (present_window)
+static void present_one(vkimg_t *im, VkImage src, int cx, int cy, int cw, int ch, int flip, double period, uint64_t ticket, int with_meta) {
     uint32_t k = g_pi++ % 8;
     // A redraw is not worth a freeze: this device's kgsl or compositor can hold a fence or a buffer for half a second, and waiting it out stalls the whole menu. Wait
     // 30 ms at most and give the frame up; the next redraw, 33 ms on, tries again with the newest state. Game frames still wait without a bound
     uint64_t wt = period < 0 ? 30000000ull : UINT64_MAX;
     if (vkWaitForFences(V.dev, 1, &g_pfence[k], 1, wt) == VK_TIMEOUT) return;
-    VkFormat want = im->fmt == VK_FORMAT_R8G8B8A8_SRGB || im->fmt == VK_FORMAT_B8G8R8A8_SRGB || im->fmt == VK_FORMAT_A8B8G8R8_SRGB_PACK32 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-    if (want != g_want) { g_want = want; swap_destroy(); if (!swap_make()) return; }   // once, at the first present of the other kind
+    if (with_meta && g_meta_srgb != g_want) { g_want = g_meta_srgb; swap_destroy(); if (!swap_make()) return; }   // once, at the first present of the other kind
     uint32_t idx; VkResult r = vkAcquireNextImageKHR(V.dev, g_swap, wt, g_acq[k], VK_NULL_HANDLE, &idx);
     if (r == VK_TIMEOUT) return;   // (a redraw that could not get an image in time: the next one presents this state)
     if (r == VK_ERROR_OUT_OF_DATE_KHR) { swap_destroy(); if (!swap_make()) return; r = vkAcquireNextImageKHR(V.dev, g_swap, UINT64_MAX, g_acq[k], VK_NULL_HANDLE, &idx); }
@@ -1076,15 +1087,14 @@ static void present_window(vkimg_t *im, const int crop[4], double period, uint64
     barrier(cb, tgt, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkClearColorValue black = {{0, 0, 0, 1}}; VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(cb, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rg);
-    int cx = crop ? crop[0] : 0, cy = crop ? crop[1] : 0, cw = crop && crop[2] ? crop[2] : (int)im->w, ch = crop && crop[3] ? crop[3] : (int)im->h;
     double s = fmin((double)g_sext.width / cw, (double)g_sext.height / ch); int dw = (int)(cw * s), dh = (int)(ch * s), dx = ((int)g_sext.width - dw) / 2, dy = ((int)g_sext.height - dh) / 2;
     { float y0, bh; if (dm_overlay_visible() == 1 && ov_band((float)g_sext.width, (float)g_sext.height, &y0, &bh)) {   // the picture across the top, the gamepad under it (ov_band: never on an external display, whose gamepad stays on the phone)
           s = fmin((double)g_sext.width / cw, (double)y0 / ch); dw = (int)(cw * s); dh = (int)(ch * s); dx = ((int)g_sext.width - dw) / 2; dy = ((int)y0 - dh) / 2; } }
-    vk_pic_set((float)dx / g_sext.width, (float)dy / g_sext.height, (float)dw / g_sext.width, (float)dh / g_sext.height);
+    if (with_meta) vk_pic_set((float)dx / g_sext.width, (float)dy / g_sext.height, (float)dw / g_sext.width, (float)dh / g_sext.height);
     VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
-    if (vk_window_bottom_up()) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }   // lower-left origin: the window image is stored bottom-up (gfx_vk_exec.c)
-    if (im->layout == VK_IMAGE_LAYOUT_UNDEFINED) { barrier(cb, im->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL); im->layout = VK_IMAGE_LAYOUT_GENERAL; }   // an imported frame buffer, first shown (gl_android.c)
-    vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+    if (flip && vk_window_bottom_up()) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }   // lower-left origin: the window image is stored bottom-up (gfx_vk_exec.c)
+    if (im && im->layout == VK_IMAGE_LAYOUT_UNDEFINED) { barrier(cb, im->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL); im->layout = VK_IMAGE_LAYOUT_GENERAL; }   // an imported frame buffer, first shown (gl_android.c)
+    vkCmdBlitImage(cb, src, VK_IMAGE_LAYOUT_GENERAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
     VkImageLayout lay = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     int external = dm_external_active();
     int ovm = external ? 0 : dm_overlay_visible(), menu = external ? -1 : dm_menu_state(), fps = dm_overlay_fps();
@@ -1143,6 +1153,28 @@ static void present_window(vkimg_t *im, const int crop[4], double period, uint64
         VkSurfaceCapabilitiesKHR c; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.pd, g_surf, &c);
         if ((c.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) != (VkSurfaceTransformFlagsKHR)g_pre) swap_destroy();
     }
+}
+static void crop_of(vkimg_t *im, const int crop[4], int *cx, int *cy, int *cw, int *ch) {
+    *cx = crop ? crop[0] : 0; *cy = crop ? crop[1] : 0; *cw = crop && crop[2] ? crop[2] : (int)im->w; *ch = crop && crop[3] ? crop[3] : (int)im->h;
+}
+static void present_window(vkimg_t *im, const int crop[4], double period, uint64_t ticket) {   // period: the game's frame period (s); < 0 for a redraw (ticket 0)
+    int cx, cy, cw, ch; crop_of(im, crop, &cx, &cy, &cw, &ch);
+    g_meta_srgb = im->fmt == VK_FORMAT_R8G8B8A8_SRGB || im->fmt == VK_FORMAT_B8G8R8A8_SRGB || im->fmt == VK_FORMAT_A8B8G8R8_SRGB_PACK32 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    present_one(im, im->img, cx, cy, cw, ch, 1, period, ticket, 1);
+}
+// The frame generation (dm_framegen.c): the output stream's period (ns; 0 = off), the rate the window asks the system for so the panel can carry the extra images
+// (a FIFO swapchain carries one image a refresh: at the game's own rate the present thread falls behind and the game waits on it), and the images per game frame
+static _Atomic uint64_t g_lsfg_out_ns; static _Atomic int g_lsfg_images = 1;
+int vk_fg_images(void) { return atomic_load(&g_lsfg_images); }   // perf_android.c: the game's longer wait for the present thread is a pace, not work
+// A game frame through the frame generation: its generated frames first, each held for an equal share of the interval, then the game's own frame (holding its
+// share too: stepping by the game's period instead spaced the desired present times unevenly)
+static void present_game(vkimg_t *im, const int crop[4], double period, uint64_t ticket) {
+    VkImage gen[3] = {0}; double hold = 0, out_period = 0;
+    int ng = dm_fg_frame(im, crop, period, gen, &hold, &out_period);
+    atomic_store(&g_lsfg_out_ns, out_period > 0 ? (uint64_t)(out_period * 1e9) : 0); atomic_store(&g_lsfg_images, ng > 0 ? ng + 1 : 1);
+    int cx, cy, cw, ch; crop_of(im, crop, &cx, &cy, &cw, &ch);
+    for (int g = 0; g < ng; g++) present_one(NULL, gen[g], 0, 0, cw, ch, 0, hold, 0, 0);   // (the chain's images are the crop's size, upright)
+    present_window(im, crop, ng ? hold : period, ticket);
 }
 // headless frame shots
 static int shot_wanted(uint64_t n) {
@@ -1208,7 +1240,7 @@ static void *present_thread(void *arg) {
         }
         typeof(g_pq[0]) e = g_pq[g_pq_tail % PQ_N];
         pthread_mutex_unlock(&g_pq_mu);
-        if (e.im) { last = e; pthread_mutex_lock(&g_present_mu); if (swap_make()) present_window(e.im, e.has_crop ? e.crop : NULL, e.period, e.n); pthread_mutex_unlock(&g_present_mu); }
+        if (e.im) { last = e; pthread_mutex_lock(&g_present_mu); if (swap_make()) present_game(e.im, e.has_crop ? e.crop : NULL, e.period, e.n); pthread_mutex_unlock(&g_present_mu); }
         pthread_mutex_lock(&g_pq_mu); g_pq_tail++; g_pq_done = e.n; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }
     return NULL;
@@ -1247,6 +1279,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     static int game_rate = -1; static uint64_t game_rate_at; double wperiod = period;
     if (game_rate < 0 || g_presents - game_rate_at >= 60) { game_rate = dm_pacing_window_game_rate(); game_rate_at = g_presents; }
     if (game_rate) { int nvn_game_fps(void); int gf = nvn_game_fps(); if (gf > 0 && 1.0 / gf < wperiod) wperiod = 1.0 / gf; }
+    { uint64_t o = atomic_load(&g_lsfg_out_ns); if (o && o / 1e9 < wperiod) wperiod = o / 1e9; }   // the frame generation's output rate (present_game): the panel carries the extra images
     static ANativeWindow *rate_win; static double rate_period, want_period; static uint64_t want_since;
     if (wperiod != want_period) { want_period = wperiod; want_since = g_presents; }
     if (g_win && (g_win != rate_win || (wperiod != rate_period && (wperiod < rate_period || g_presents - want_since >= 60)))) { rate_win = g_win; rate_period = wperiod; dm_perf_window(g_win, wperiod > 0 ? 1.0 / wperiod : 60); }

@@ -21,6 +21,7 @@ ap.add_argument('--keep-going', action='store_true')
 ap.add_argument('-O', default='2')
 ap.add_argument('--gfx', default='vk', choices=('vk', 'null'), help='graphics backend: Vulkan or the null device')
 ap.add_argument('--release', action='store_true', help='a build to keep installed: no debug information, stripped, no DM_CTL')
+ap.add_argument('--no-lsfg', action='store_true', help='build without the frame generation (NX_LSFG): no lsfg/ code, the pause menu row reports "not in this build"')
 ap.add_argument('--adrenotools', action='store_true', help='also libadrenotools.so and its hooks (third_party/libadrenotools), which the APK carries with a custom Vulkan driver')
 a = ap.parse_args()
 if not (a.exe or a.lib): a.exe = a.lib = True
@@ -67,7 +68,8 @@ for sh in sorted((DM / 'android/shaders').glob('*.*')):
 def srcs(*globs): return [p for g in globs for p in sorted(DM.glob(g))]
 HOST = [p for p in srcs('host/*.c') if p.name not in ('hle_movie_avc.c',)]   # VideoToolbox: dm/android/movie_avc.c instead
 GFX = srcs('gfx/*.c', 'gfx/nvn/*.c', 'gfx/tex/*.c')
-PORT = [p for p in srcs('android/compat/*.c', 'android/*.c') if not (p.name == 'gfx_null.c' and a.gfx != 'null') and not ((p.name.startswith('gfx_vk') or p.name == 'gl_android.c') and a.gfx != 'vk')]   # one graphics backend; GLES presents through Vulkan and is not part of a null NVN tool
+PORT = [p for p in srcs('android/compat/*.c', 'android/*.c') if not (p.name == 'gfx_null.c' and a.gfx != 'null') and not ((p.name.startswith('gfx_vk') or p.name in ('gl_android.c', 'dm_framegen.c', 'vka_shim.c')) and a.gfx != 'vk') and not (p.name == 'vka_shim.c' and a.no_lsfg)]   # one graphics backend; GLES presents through Vulkan and is not part of a null NVN tool; the frame generation presents through Vulkan too (vka_shim.c: only with lsfg/)
+LSFG = srcs('android/lsfg/*.c') if a.gfx == 'vk' and not a.no_lsfg else []   # Lossless Scaling's frame generation (GPL-3.0-or-later, lsfg/LICENSE.md)
 ASM = srcs('host/entry.S', 'gfx/nvn/nvn_entry.S', 'gfx/nvn/nvn_thunks.S')
 VPX = srcs('third_party/libvpx/**/*.c')
 ZSTD = srcs('third_party/zstd/zstddeclib.c')   # zstd's decompressor: the shader bundle's SPIR-V (gfx_vk_shader.c bundle_spv)
@@ -76,7 +78,7 @@ INC = ['-include', str(DM / 'android/compat/include/darwin_compat.h'), '-include
        f'-I{DM / "third_party/vulkan-headers/include"}', f'-I{gen / a.game}', f'-I{DM / "third_party/libvpx"}', f'-I{DM / "third_party/stb_vorbis"}', f'-I{DM / "third_party/zstd"}', f'-I{DM / "android"}']
 CFLAGS = [TARGET, f'-O{a.O}'] + DBG + ['-fPIC', '-fno-omit-frame-pointer', '-ffixed-x18', '-Wall', '-Wno-unused-function', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
           '-Wno-format', '-Wno-deprecated-declarations', '-Wno-gnu-folding-constant', '-Werror=implicit-function-declaration', '-Werror=return-type',
-          '-Werror=incompatible-pointer-types', '-Werror=int-conversion', '-D_GNU_SOURCE', '-DDM_ANDROID=1', '-fno-strict-aliasing', '-fvisibility=hidden'] + (['-DDM_RELEASE=1'] if a.release else [])
+          '-Werror=incompatible-pointer-types', '-Werror=int-conversion', '-D_GNU_SOURCE', '-DDM_ANDROID=1', '-fno-strict-aliasing', '-fvisibility=hidden'] + (['-DDM_RELEASE=1'] if a.release else []) + ([] if a.no_lsfg or a.gfx != 'vk' else ['-DNX_LSFG=1'])
 VPX_FLAGS = [TARGET, '-O2'] + DBG + ['-fPIC', f'-I{DM / "third_party/libvpx"}', f'-I{DM / "third_party/libvpx/config"}', '-w']
 ZSTD_FLAGS = [TARGET, '-O2'] + DBG + ['-fPIC', '-fvisibility=hidden', '-DZSTDLIB_VISIBLE=', '-DZSTDERRORLIB_VISIBLE=', '-w']   # its API stays inside libdmhost.so
 
@@ -116,7 +118,7 @@ def build(files):
             elif err.strip() and '--verbose' in sys.argv: print(err, file=sys.stderr)
     return objs, failed
 
-all_files = HOST + GFX + PORT + ASM
+all_files = HOST + GFX + PORT + ASM + LSFG
 objs, failed = build(all_files)
 vobjs, vfailed = build(VPX + ZSTD)
 failed += vfailed

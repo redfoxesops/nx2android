@@ -77,6 +77,8 @@ A controller whose A is the bottom button (Xbox labels, most Android devices' bu
 
 **Floating sticks** (the **Gamepad** tab, off at first) hides the analog sticks until you touch the screen: a touch on a spot no button takes brings the left stick there on the left half of the screen and the right stick on the right half, centred under your finger, and it goes again when you lift it. While it is on, the game's own touch screen gets no touches. A game's profile can turn it on by default (`setting float_sticks=1`).
 
+**Frame gen** (the **Game** tab, off at first) adds generated frames between the game's own with Lossless Scaling's frame generation (LSFG): 2x, 3x or 4x the images per game frame, as many as the display's refresh leaves room for. It needs your own `Lossless.dll` from Lossless Scaling (Steam), copied into the game app's files folder as `Android/data/<package>/files/Lossless.dll` (`adb push Lossless.dll /sdcard/Android/data/<package>/files/`); it is never part of the APK. The log (`log.txt`) says why when it does not generate. **Flow scale** under it is a slider, 25 to 100 percent (75 by default): the optical flow's resolution, lower is faster and rougher; it takes the new value when the finger lifts. A target rate (`DM_LSFG_TARGET`) is an `env.txt` line.
+
 For Android's Unicode keyboard, port with `--native-keyboard`. It supports composed text, non-Latin scripts and emoji through the system IME, preserves initial text, and applies the guest's UTF-16 length limits. This option requires `javac` and an Android SDK with platform and build-tools (`ANDROID_HOME`). The default APK keeps the existing controller keyboard and does not require Java build tools. Combine `--external-display --native-keyboard` to opt into the native keyboard on an external-screen port; external display alone keeps the controller keyboard. The combined mode still needs runtime qualification over the full-screen phone gamepad.
 
 For the experimental external-screen controller, port from the command line with `--external-display`. The game moves to a connected display and the phone shows the gamepad. In the pause menu's **Game → Audio output**, choose the phone, a connected output, or the system default; the list updates as devices connect or disconnect. Bluetooth call-only routes are omitted; the system may not honor the requested device. This option requires `javac` and an Android SDK with a platform and build-tools (`ANDROID_HOME`). Android 12 or newer uses the saved native layout; Android 10–11 use the fallback controller. Support varies by device and game.
@@ -89,7 +91,7 @@ The step-by-step guide is [packaging/INSTALL.md](packaging/INSTALL.md). You need
 
 ## Saves
 
-The game's pause menu (Game tab) has **Export save** and **Import save**: an export is a folder in `Android/data/<package>/files/saves/` on the device, the save's files as a console's save tools copy them, so a save from a console imports the same way. The app's **Saves** tab moves them between the device and the PC.
+The game's pause menu (Style tab) has **Export save** and **Import save**: an export is a folder in `Android/data/<package>/files/saves/` on the device, the save's files as a console's save tools copy them, so a save from a console imports the same way. The app's **Saves** tab moves them between the device and the PC.
 
 An import replaces the save the game has; the app exports that one first on the device (a folder ending `-before-import`). Uninstalling the app deletes its saves and its exports: copy them to the PC first.
 

@@ -39,7 +39,9 @@ class OverlayVisibility(unittest.TestCase):
 #include "stick_axis.h"
 static _Atomic int g_set_overlay, g_overlay, g_pads, g_edit, g_menu_btn = 1;
 static _Atomic int g_cust[2][2][OV_N][4];
-static _Atomic int g_set_rumble, g_set_fps, g_set_labels, g_menu_tab, g_sv_st, g_set_float, g_cust_ver;
+static _Atomic int g_set_rumble, g_set_fps, g_set_labels, g_menu_tab, g_sv_st, g_set_float, g_cust_ver, g_set_lsfg, g_fps_ver, lsfg_applied;
+int dm_lsfg_mode(void) { return atomic_load(&g_set_lsfg); }
+static void lsfg_apply(void) { atomic_fetch_add(&lsfg_applied, 1); }
 static int layout, saves;
 int dm_overlay_layout(void) { return layout; }
 float dm_overlay_scale(void) { return 1; }
@@ -406,6 +408,9 @@ static void floating_sticks(void) {
     t.action = AMOTION_EVENT_ACTION_UP; assert(handle_event(&t) == 1);
     int v = atomic_load(&g_cust_ver); menu_do(OVM_FLOAT);   // the menu's switch: saved, and the theme-less layer rasterized again
     assert(atomic_load(&g_set_float) && saves == 1 && atomic_load(&g_cust_ver) == v + 1); menu_do(OVM_FLOAT); assert(!atomic_load(&g_set_float));
+    // Frame gen: off, 2x, 3x, 4x and off again; each press is applied, saved and draws the panel again
+    const int lsfg[4] = {2, 3, 4, 0}; saves = 0; atomic_store(&lsfg_applied, 0); v = atomic_load(&g_fps_ver);
+    for (int i = 0; i < 4; i++) { menu_do(OVM_LSFG); assert(atomic_load(&g_set_lsfg) == lsfg[i]); assert(atomic_load(&lsfg_applied) == i + 1); assert(saves == i + 1); assert(atomic_load(&g_fps_ver) == v + i + 1); }
 }
 
 int main(int argc, char **argv) {

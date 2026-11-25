@@ -59,6 +59,12 @@ DM_LINK_VTICK	str		debug,ios	?	nvn_mtl.m
 DM_LOADHASH	str		debug	?	loader.c	
 DM_LOG_FPS	bool	0	debug	start	gfx_vk_present.c	1 = every 600 presents a line on the replay's descriptor caches: memo hits kept and missed by cause, stage sets found by their bindings (rmemo), constant buffer paths and misses, texture views
 DM_LONGFRAME	str		debug	?	hle_nvn.c	
+DM_LSFG	bool	0	debug	start	dm_framegen.c front_android.c	frame generation (Lossless Scaling's LSFG) on; the pause menu's Frame gen row (settings.txt lsfg=) overrides it once the player chooses
+DM_LSFG_DLL	str		app	start	dm_framegen.c	the player's own Lossless.dll (front_android.c: the app's files folder, Lossless.dll); never in the APK
+DM_LSFG_FLOW	int	75	debug	start	dm_framegen.c front_android.c	the optical flow's resolution, percent (25..100); the pause menu's Flow scale (settings.txt lsfg_flow=) wins once moved
+DM_LSFG_MIN_FPS	int	30	debug	live	dm_framegen.c	the game's own rate the generation must not push it under (0 = none)
+DM_LSFG_MULT	int	2	debug	start	dm_framegen.c front_android.c	images per game frame (2..4) with DM_LSFG=1, until the player chooses in the menu
+DM_LSFG_TARGET	int	0	debug	start	dm_framegen.c front_android.c	the output rate to hold (0 = the multiplier decides)
 DM_MEMSTAT	str		debug,ios	?	memstat.m	
 DM_MEMSTAT_DUMP	int		debug,ios	?	memstat.m	
 DM_MEM_CAP_GB	str		debug	?	hle_nvn.c	
@@ -257,6 +263,7 @@ DM_VK_DBG_DRAW	int		debug	live	gfx_vk_exec.c	bisection aids: skip command kinds;
 DM_VK_DRIVER	str		porter	start	gfx_vk_core.c	the Vulkan driver library in the APK (porter --vulkan-driver, e.g. Turnip)
 DM_VK_DYN_UBO	bool		debug	start	gfx_vk_shader.c	no dynamic uniform-buffer offsets (descriptor reuse drops)
 DM_VK_FDZ	bool	1	profile	live	gfx_vk_exec.c	no fragment-depth variants: draws that test a depth buffer a fragment shader wrote through `gl_FragDepth` (in the last two presents) normally get a variant of their fragment shader that writes `gl_FragDepth = gl_FragCoord.z`, the same depth tested after the shader, out of Adreno's early culling, whi
+DM_VK_FG_REFRESH_CAP	bool	1	debug	live	dm_framegen.c	0 = the frame generation ignores the display's refresh cap (diagnosis of pacing against the display)
 DM_VK_FLIPY	bool		debug	live	gfx_vk_exec.c	the old clip-space y convention (pictures flip)
 DM_VK_FRONT	int		debug	start	gfx_vk_exec.c	2`
 DM_VK_GS_SPLIT	bool	0	profile	live	gfx_vk_exec.c	1 = split geometry-shader draws (gfx_vk_gs_split.c)

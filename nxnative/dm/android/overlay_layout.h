@@ -72,6 +72,9 @@ int dm_overlay_off(int layout, int ctl);
 // control takes, and is centred there while the finger holds it (dm_overlay_off leaves it out until then). 0 when off or in the layout editor; 1 when on,
 // with *x, *y the stick's centre as fractions of the window's width and height, both < 0 while no finger holds it (stick: 0 left, 1 right)
 int dm_overlay_float(int stick, float *x, float *y);
+// frame generation (the menu's Frame gen, settings.txt lsfg=; dm_framegen.c): 0 off, else the multiplier 2..4
+int dm_lsfg_mode(void);
+int dm_lsfg_flow(void);   // its flow scale, percent OV_FLOW_MIN..MAX (the menu's Flow scale, settings.txt lsfg_flow=)
 static inline int ov_off(const ov_ctl *c);   // (below: c in OV_LAYOUTS)
 float dm_overlay_opacity(void);    // the gamepad's opacity, 0.2..0.8 (the menu's Opacity slider)
 static inline int ov_index(const ov_ctl *c, int *layout) { int k = (int)(c - &OV_LAYOUTS[0][0]); *layout = k / OV_N; return k % OV_N; }   // c: in OV_LAYOUTS
@@ -234,14 +237,14 @@ static inline int fpso_scale(int base, int size) { return size == FPSO_SMALL ? (
 // ---- the pause menu: a panel in the middle of the window: a row of tabs, the open tab's rows, and Resume. Everything is placed in a panel rectangle p
 // (x, y, width, height: the window's for touches, the raster's for drawing), so the touches and the drawing agree ----
 enum { OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_FPS, OVM_MODE, OVM_EXPORT, OVM_IMPORT, OVM_PAD, OVM_AUDIO,
-       OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_FLOAT, OVM_RESUME, OVM_TAB, OVM_N };   // OVM_TAB: the tabs' row;
+       OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_FLOAT, OVM_LSFG, OVM_FLOW, OVM_RESUME, OVM_TAB, OVM_N };   // OVM_TAB: the tabs' row;
             // OVM_ROW_*: the counter's rows on or off; OVM_POS .. OVM_SIZE: its corner, colour, outline and size, one value on with each press (fpso_step below);
             // OVM_EDIT: the layout editor; OVM_MODE: handheld (performance) or docked (resolution); OVM_EXPORT, OVM_IMPORT: the save manager (saves_android.c);
-            // OVM_PAD: a controller's face buttons by their position or by their label (front_android.c pad_labels); OVM_FLOAT: floating sticks (dm_overlay_float)
+            // OVM_PAD: a controller's face buttons by their position or by their label (front_android.c pad_labels); OVM_FLOAT: floating sticks (dm_overlay_float); OVM_LSFG: frame generation off, 2x, 3x or 4x (dm_lsfg_mode); OVM_FLOW: its flow scale (a slider, dm_lsfg_flow)
 #define OVM_TABS 4   // (a power of two: ov_menu_item masks the tab)
 #define OVM_PER_TAB 6
-static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_FLOAT}, {OVM_FPS, OVM_MODE, OVM_EXPORT, OVM_IMPORT, OVM_AUDIO, -1},
-                                                         {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, -1}, {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1, -1}};
+static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_FLOAT}, {OVM_FPS, OVM_MODE, OVM_LSFG, OVM_FLOW, OVM_AUDIO, -1},
+                                                         {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, -1}, {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_EXPORT, OVM_IMPORT}};
 static const char *const OVM_TAB_NAMES_EN[OVM_TABS] = {"Gamepad", "Game", "Counter", "Style"};
 static const char *const OVM_TAB_NAMES_ZH[OVM_TABS] = {"手柄", "游戏", "计数", "样式"};
 #define OVM_TAB_NAMES (dm_ui_zh() ? OVM_TAB_NAMES_ZH : OVM_TAB_NAMES_EN)
@@ -272,8 +275,10 @@ static inline int ov_menu_item(int tab, int row) {
 #define OV_MENU_PAD 0.03f
 #define OV_OPACITY_MIN 20    // the gamepad's opacity, percent (the Opacity slider, settings.txt opacity=)
 #define OV_OPACITY_MAX 80
+#define OV_FLOW_MIN 25       // frame generation's flow scale, percent (the Flow scale slider, settings.txt lsfg_flow=; dm_framegen.c keeps 25..100)
+#define OV_FLOW_MAX 100
 // what the menu shows (-1 = closed): bit 0 the gamepad is on, bit 1 rumble is on, bit 2 docked, bit 3 the frame rate shown, bits 4..7 the highlighted row + 1
-// (0 = none), bit 8 the open tab, bits 9..15 the opacity in percent, bit 19 the open tab's second bit (the Counter and Style tabs), bits 29..30 a count of the counter options' changes (dm_fps_opts: the panel
+// (0 = none), bit 8 the open tab, bits 9..15 the open tab's slider in percent (the Game tab's flow scale, else the opacity), bit 19 the open tab's second bit (the Counter and Style tabs), bits 29..30 a count of the counter options' changes (dm_fps_opts: the panel
 // shows them), bits 20..22 the last export's outcome (OVX_*), bit 23 floating sticks on, bits 24..27 a count of exports (its name
 // changes with each). Bit 16: the text entry's panel instead (its edit count below); bit 17: the layout editor (OVE_ST_* below); bit 18: the save picker (OVS_ST)
 #define OVT_ST 0x10000   // the mode bits of dm_menu_state, one each: OVT_ST the text entry, OVE_ST the layout editor, OVS_ST the save picker (tests/test_menu_bits.py)
@@ -297,11 +302,11 @@ static inline int ov_menu_row_at(float x, float y, float W, float H) {   // the 
     return i >= 0 && i < OVM_ROWS ? i : -1;
 }
 static inline int ov_menu_tab_at(float x, const float p[4]) { float r[4]; ov_menu_rowrect(p, 0, r); int t = (int)((x - r[0]) / (r[2] / OVM_TABS)); return t < 0 ? 0 : t >= OVM_TABS ? OVM_TABS - 1 : t; }
-// the Opacity slider's track in its row (x, y of its left end's centre line, width): the right part of the row, room for the value after it
+// a slider's track in its row (Opacity, Flow scale) (x, y of its left end's centre line, width): the right part of the row, room for the value after it
 static inline void ov_menu_track(const float p[4], int row, float t[3]) { float r[4]; ov_menu_rowrect(p, row, r); t[0] = r[0] + r[2] * 0.40f; t[1] = r[1] + r[3] / 2; t[2] = r[2] * 0.44f; }
-static inline int ov_menu_track_value(float x, const float p[4], int row) {   // the opacity a finger at x sets, whole 5 percents
+static inline int ov_menu_track_value(float x, const float p[4], int row, int lo, int hi) {   // the value lo..hi a finger at x sets, whole 5 percents
     float t[3]; ov_menu_track(p, row, t); float f = (x - t[0]) / t[2]; f = f < 0 ? 0 : f > 1 ? 1 : f;
-    return OV_OPACITY_MIN + 5 * (int)lroundf(f * (OV_OPACITY_MAX - OV_OPACITY_MIN) / 5);
+    return lo + 5 * (int)lroundf(f * (hi - lo) / 5);
 }
 
 // ---- the layout editor (front_android.c, from the menu's Edit layout): the game stays held; every control (the menu button too) can be dragged, and
